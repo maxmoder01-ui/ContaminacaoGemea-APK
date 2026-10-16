@@ -1,1 +1,66 @@
 
+name: Exportar APK Android
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '**.gd'
+      - '**.tscn'
+      - '**.tres'
+      - '**.glb'
+      - '**.png'
+      - '**.ogg'
+      - '**.wav'
+      - '**.godot'
+      - 'project.godot'
+      - '.github/workflows/export-android.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Baixar o projeto
+        uses: actions/checkout@v4
+
+      - name: Instalar Godot e dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip openjdk-17-jdk
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          unzip Godot_v4.3-stable_linux.x86_64.zip
+          chmod +x Godot_v4.3-stable_linux.x86_64
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
+          mkdir -p ~/.local/share/godot/export_templates/4.3.stable
+          unzip -q Godot_v4.3-stable_export_templates.tpz -d /tmp/godot-templates
+          cp -r /tmp/godot-templates/templates/* ~/.local/share/godot/export_templates/4.3.stable/
+
+      - name: Localizar projeto
+        id: project
+        run: |
+          PROJECT_FILE="$(find . -name project.godot -not -path '*/.godot/*' | head -n 1)"
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "Erro: project.godot não encontrado."
+            exit 1
+          fi
+          echo "dir=$(dirname "$PROJECT_FILE")" >> "$GITHUB_OUTPUT"
+
+      - name: Importar recursos
+        run: |
+          ./Godot_v4.3-stable_linux.x86_64 \
+            --headless --editor --path "${{ steps.project.outputs.dir }}" --import
+
+      - name: Exportar APK
+        run: |
+          mkdir -p build
+          ./Godot_v4.3-stable_linux.x86_64 \
+            --headless --path "${{ steps.project.outputs.dir }}" \
+            --export-debug "Android" "$GITHUB_WORKSPACE/build/ContaminacaoGemea.apk"
+
+      - name: Disponibilizar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ContaminacaoGemea-Android-APK
+          path: build/ContaminacaoGemea.apk
+          if-no-files-found: error
