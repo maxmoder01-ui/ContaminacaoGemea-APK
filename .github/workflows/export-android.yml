@@ -10,9 +10,12 @@ on:
       - '**.tres'
       - '**.glb'
       - '**.png'
+      - '**.jpeg'
+      - '**.jpg'
       - '**.ogg'
       - '**.wav'
       - '**.godot'
+      - '**.cfg'
       - 'project.godot'
       - '.github/workflows/export-android.yml'
 
@@ -24,39 +27,132 @@ jobs:
       - name: Baixar o projeto
         uses: actions/checkout@v4
 
-      - name: Instalar Godot e dependências
+      - name: Instalar dependências
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget unzip openjdk-17-jdk
+          sudo apt-get install -y wget unzip openjdk-17-jdk python3
+
+      - name: Instalar Godot 4.3
+        run: |
           wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
-          unzip Godot_v4.3-stable_linux.x86_64.zip
+          unzip -q Godot_v4.3-stable_linux.x86_64.zip
           chmod +x Godot_v4.3-stable_linux.x86_64
+
           wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
           mkdir -p ~/.local/share/godot/export_templates/4.3.stable
           unzip -q Godot_v4.3-stable_export_templates.tpz -d /tmp/godot-templates
           cp -r /tmp/godot-templates/templates/* ~/.local/share/godot/export_templates/4.3.stable/
 
-      - name: Localizar projeto
+      - name: Localizar projeto Godot
         id: project
+        shell: bash
         run: |
-          PROJECT_FILE="$(find . -name project.godot -not -path '*/.godot/*' | head -n 1)"
+          PROJECT_FILE="$(find . -name project.godot -not -path '*/.godot/*' -print -quit)"
+
           if [ -z "$PROJECT_FILE" ]; then
-            echo "Erro: project.godot não encontrado."
+            echo "::error::Não encontrei project.godot no repositório."
             exit 1
           fi
-          echo "dir=$(dirname "$PROJECT_FILE")" >> "$GITHUB_OUTPUT"
+
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Projeto encontrado em: $PROJECT_DIR"
+
+      - name: Corrigir preset Android automaticamente
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
+        run: |
+          python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["PROJECT_DIR"]) / "export_presets.cfg"
+
+          if not path.exists():
+              raise SystemExit("Erro: export_presets.cfg não encontrado.")
+
+          text = path.read_text(encoding="utf-8")
+          lines = text.splitlines()
+          sections = []
+          current = None
+
+          for line in lines:
+              if line.startswith("[") and line.endswith("]"):
+                  current = line[1:-1]
+              sections.append((current, line))
+
+          preset_name = None
+          for section, line in sections:
+              if section and section.startswith("preset.") and line.strip() == 'name="Android"':
+                  preset_name = section
+                  break
+
+          if preset_name is None:
+              raise SystemExit(
+                  'Erro: não encontrei um preset chamado "Android" em export_presets.cfg.'
+              )
+
+          options_section = preset_name + ".options"
+          output = []
+          current = None
+          found_options = False
+          found_gradle = False
+          found_min = False
+
+          for line in lines:
+              if line.startswith("[") and line.endswith("]"):
+                  if current == options_section:
+                      if not found_gradle:
+                          output.append("gradle_build/use_gradle_build=true")
+                      if not found_min:
+                          output.append('gradle_build/min_sdk="24"')
+                  current = line[1:-1]
+                  if current == options_section:
+                      found_options = True
+                  output.append(line)
+                  continue
+
+              if current == options_section:
+                  if line.startswith("gradle_build/use_gradle_build="):
+                      output.append("gradle_build/use_gradle_build=true")
+                      found_gradle = True
+                      continue
+                  if line.startswith("gradle_build/min_sdk="):
+                      output.append('gradle_build/min_sdk="24"')
+                      found_min = True
+                      continue
+
+              output.append(line)
+
+          if not found_options:
+              output.extend([
+                  "",
+                  f"[{options_section}]",
+                  "gradle_build/use_gradle_build=true",
+                  'gradle_build/min_sdk="24"',
+              ])
+
+          path.write_text("\n".join(output) + "\n", encoding="utf-8")
+          print("Preset Android atualizado: Gradle habilitado e Min SDK 24.")
+          PY
 
       - name: Importar recursos
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
           ./Godot_v4.3-stable_linux.x86_64 \
-            --headless --editor --path "${{ steps.project.outputs.dir }}" --import
+            --headless --editor --path "$PROJECT_DIR" --import
 
       - name: Exportar APK
+        env:
+          PROJECT_DIR: ${{ steps.project.outputs.dir }}
         run: |
           mkdir -p build
           ./Godot_v4.3-stable_linux.x86_64 \
-            --headless --path "${{ steps.project.outputs.dir }}" \
-            --export-debug "Android" "$GITHUB_WORKSPACE/build/ContaminacaoGemea.apk"
+            --headless \
+            --path "$PROJECT_DIR" \
+            --export-debug "Android" \
+            "$GITHUB_WORKSPACE/build/ContaminacaoGemea.apk"
 
       - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
