@@ -1,0 +1,35 @@
+name: Exportar APK Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'ContaminacaoGemea_3D_Completo/**'
+      - '.github/workflows/export-android.yml'
+
+jobs:
+  export-android:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3.0
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Criar pasta de saída
+        run: mkdir -p build
+
+      - name: Importar recursos Godot
+        run: godot --headless --path ContaminacaoGemea_3D_Completo --editor --quit
+
+      - name: Exportar APK Android
+        run: godot --headless --path ContaminacaoGemea_3D_Completo --export-debug "Android" build/ContaminacaoGemea.apk
+
+      - name: Publicar APK para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: ContaminacaoGemea-Android-APK
+          path: build/ContaminacaoGemea.apk
+          if-no-files-found: error
+          retention-days: 14
